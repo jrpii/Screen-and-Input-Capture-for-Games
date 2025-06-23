@@ -1,0 +1,15 @@
+name: osrs-capture
+channels:
+  - conda-forge
+  - defaults
+dependencies:
+  - python=3.10
+  - pip
+  - numpy
+  - pillow
+  - matplotlib
+  - opencv
+  - pywin32
+  - pip:
+    - windows-capture
+    - pynput

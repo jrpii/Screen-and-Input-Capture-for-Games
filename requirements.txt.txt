@@ -1,0 +1,8 @@
+
+
+# --- requirements for training data capture ---
+windows-capture
+pillow
+pynput
+
+# --- ---
