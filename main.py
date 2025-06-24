@@ -1,16 +1,17 @@
 # --- main.py --- (For starting session capture.)
 import time
+from capture.config import CONFIG
 from capture.screen_capture import ScreenCapture
 from capture.input_capture import InputLogger
 from capture.session_recorder import SessionRecorder
-from capture.utils import get_runelite_window_rect
+from capture.utils import get_specified_window_rect
 from queue import Queue
 
 if __name__ == "__main__":
     # Tracking Config
-    tick_rate = 0.6
-    frames_per_tick = 3 #3, 6, are good and match tick rate of 0.6 best
-    frame_interval = tick_rate / frames_per_tick  # Ideal = 0.12s for 5 fpt, 0.1 for 6 fpt, 0.2 for 3fpt
+    tick_rate = CONFIG["tick_rate"]                 # Seconds per game cycle. Set at 1 to effectivly ignore.
+    frames_per_tick = CONFIG["frames_per_tick"]     # 3, 6, are good and match tick rate of 0.6 best
+    frame_interval = tick_rate / frames_per_tick    # Ideal = 0.12s for 5 fpt, 0.1 for 6 fpt, 0.2 for 3fpt
 
     # State
     start_time = None
@@ -21,7 +22,7 @@ if __name__ == "__main__":
     screen = ScreenCapture()
     inputs = InputLogger(start_time=start_time)
 
-    offset_x, offset_y, width, height = get_runelite_window_rect()
+    offset_x, offset_y, width, height = get_specified_window_rect()
     inputs.set_window_bounds((offset_x, offset_y), (width, height))
 
     # Start
@@ -29,10 +30,10 @@ if __name__ == "__main__":
     inputs.start()
     recorder = SessionRecorder(screen, inputs, frame_queue, start_time=start_time)
 
-    print("Waiting for first frame...")
+    print("Waiting for first frame...", flush=True)
     while screen.get_latest_frame() is None:
         time.sleep(0.01)
-    print("First frame received. Starting capture...")
+    print("First frame received. Starting capture...", flush=True)
 
     try:
         while True:
@@ -48,7 +49,7 @@ if __name__ == "__main__":
                     inputs.start_time = now
                     next_frame_time = start_time
                     frame_id = 0
-                    print("Start time set. Beginning capture loop.")
+                    print("Start time set. Beginning capture loop... \n(Press 'Ctrl' + 'C' to exit.)", flush=True)
                 else:
                     continue
             else:
@@ -60,7 +61,7 @@ if __name__ == "__main__":
 
                 actual_time = time.time()
                 drift = actual_time - next_frame_time
-                print(f"Drift: {drift:.6f} sec", flush=True)
+                #print(f"Drift: {drift:.6f} sec", flush=True)
 
                 elapsed = actual_time - start_time
                 tick_number = int(elapsed // tick_rate)

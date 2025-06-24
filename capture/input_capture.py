@@ -1,15 +1,13 @@
 # --- input_capture.py ---
 from pynput import mouse, keyboard
 import time
-
-from pynput import mouse, keyboard
 import threading
-import time
 import queue
+from capture.config import CONFIG
 
 # Helper to reduce data precision to small yet meaningful amount.
-def round_tuple(tup, precision=4):
-    return tuple(round(v, precision) for v in tup)
+def round_tuple(tup):
+    return tuple(round(v, CONFIG["round_precision"]) for v in tup)
 
 class InputLogger:
     def __init__(self, start_time):
@@ -59,6 +57,8 @@ class InputLogger:
     def on_move(self, x, y):
         with self.lock:
             dt = time.time()
+            if self.start_time is None:
+                return  # Ignore inputs until start_time is set
             is_mmb_down = self.current_state.get("mouse_middle", False)
 
             # Normalized positions, clamp depending on middle mouse state (like when panning camera off screen)
@@ -76,7 +76,7 @@ class InputLogger:
 
             self.events.put({
                 "type": "move",
-                "timestamp": round(dt - self.start_time, 4),
+                "timestamp": round(dt - self.start_time, CONFIG["round_precision"]),
                 "position": round_tuple(new_pos),
                 "velocity": round_tuple((dx, dy))
             })
@@ -84,6 +84,8 @@ class InputLogger:
     def on_click(self, x, y, button, pressed):
         with self.lock:
             dt = time.time()
+            if self.start_time is None:
+                return  # Ignore inputs until start_time is set
             name = f"mouse_{button.name}"
             self.current_state[name] = pressed
 
@@ -99,7 +101,7 @@ class InputLogger:
 
             self.events.put({
                 "type": "click",
-                "timestamp": round(dt - self.start_time, 4),
+                "timestamp": round(dt - self.start_time, CONFIG["round_precision"]),
                 "position": round_tuple(self.normalize_pos(x, y)),
                 "button": button.name,
                 "pressed": pressed,
@@ -109,29 +111,35 @@ class InputLogger:
     def on_press(self, key):
         with self.lock:
             dt = time.time()
+            if self.start_time is None:
+                return  # Ignore inputs until start_time is set
             key_name = self._key_to_str(key)
             if key_name and key_name not in self.current_state["keys"]:
                 self.current_state["keys"].add(key_name)
                 self.events.put({
                     "type": "key_press",
-                    "timestamp": round(dt - self.start_time, 4),
+                    "timestamp": round(dt - self.start_time, CONFIG["round_precision"]),
                     "key": key_name
                 })
 
     def on_release(self, key):
         with self.lock:
             dt = time.time()
+            if self.start_time is None:
+                return  # Ignore inputs until start_time is set
             key_name = self._key_to_str(key)
             if key_name:
                 self.current_state["keys"].discard(key_name)
                 self.events.put({
                     "type": "key_release",
-                    "timestamp": round(dt - self.start_time, 4),
+                    "timestamp": round(dt - self.start_time, CONFIG["round_precision"]),
                     "key": key_name
                 })
 
     def on_scroll(self, x, y, dx, dy):
         now = time.time()
+        if self.start_time is None:
+            return  # Ignore inputs until start_time is set
         direction = "up" if dy > 0 else "down"
         is_direction_change = (direction != self.last_scroll_direction)
 
@@ -143,7 +151,7 @@ class InputLogger:
             self.scroll_ticks = 1
             self.events.put({
                 "type": "scroll_start",
-                "timestamp": round(now - self.start_time, 4),
+                "timestamp": round(now - self.start_time, CONFIG["round_precision"]),
                 "direction": direction
             })
         else:
@@ -154,7 +162,7 @@ class InputLogger:
 
             self.events.put({
                 "type": "scroll_tick",
-                "timestamp": round(now - self.start_time, 4),
+                "timestamp": round(now - self.start_time, CONFIG["round_precision"]),
                 "direction": direction,
                 "direction_change": is_direction_change
             })
@@ -207,7 +215,7 @@ class InputLogger:
 
         new_events.append({
             "type": "held",
-            "timestamp": round(now - self.start_time, 4),
+            "timestamp": round(now - self.start_time, CONFIG["round_precision"]),
             "held": {
                 "mouse_middle": self.current_state["mouse_middle"],
                 "mouse_left": self.current_state["mouse_left"],
@@ -219,12 +227,15 @@ class InputLogger:
         return new_events
 
     def _scroll_monitor(self):
+        if self.start_time is None:
+            return  # Ignore inputs until start_time is set
         while True:
             time.sleep(0.01)
-            if self.scroll_active and time.time() - self.last_scroll_time > 0.15: # lower to increase scroll tracking percision
+            timeout = CONFIG.get("scroll_stop_timeout", 0.15)
+            if self.scroll_active and time.time() - self.last_scroll_time > timeout: # lower to increase scroll tracking percision
                 self.events.put({
                     "type": "scroll_stop",
-                    "timestamp": round(time.time() - self.start_time, 4),
+                    "timestamp": round(time.time() - self.start_time, CONFIG["round_precision"]),
                     "duration": self.last_scroll_time - self.scroll_start_time,
                     "total_ticks": self.scroll_ticks_up + self.scroll_ticks_down,
                     "ticks_up": self.scroll_ticks_up,

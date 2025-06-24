@@ -1,4 +1,4 @@
-name: osrs-capture
+name: capture
 channels:
   - conda-forge
   - defaults
