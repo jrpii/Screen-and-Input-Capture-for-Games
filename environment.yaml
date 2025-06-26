@@ -1,0 +1,30 @@
+name: screen-capture
+channels:
+  - conda-forge
+  - defaults
+dependencies:
+  - python=3.10
+  - numpy=2.2.*
+  - matplotlib=3.10.*
+  - opencv=4.11.*
+  - py-opencv
+  - pillow
+  - pyparsing
+  - packaging
+  - fonttools
+  - contourpy
+  - cycler
+  - kiwisolver
+  - pyside6=6.9.*
+  - pywin32
+  - tornado
+  - six
+  - python-dateutil
+  - pip
+  - pip:
+      - pynput==1.8.1
+      - pyqt6==6.9.1
+      - pyqt6-qt6==6.9.1
+      - pyqt6-sip==13.10.2
+      - python-dotenv==1.1.0
+      - windows-capture==1.4.4
