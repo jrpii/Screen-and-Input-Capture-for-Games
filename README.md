@@ -44,6 +44,7 @@ python session_viewer.py
 Then select the session folder you want to replay. Currently must manually step through and only mouse move inputs visualized.
 
 📁 Output Structure
+```
 data/raw/WindowName/session_YYYYMMDD_HHMMSS/
 │
 ├── frame_000000.jpg
@@ -52,6 +53,7 @@ data/raw/WindowName/session_YYYYMMDD_HHMMSS/
 │
 ├── inputs.jsonl           # Input events grouped by frame
 ├── session_meta.json      # Session config + metadata
+```
 
 ⚙️ Configuration
 Edit capture/config.py to adjust:
