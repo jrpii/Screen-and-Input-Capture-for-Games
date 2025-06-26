@@ -74,8 +74,11 @@ class SessionRecorder:
                 continue  # Timeout, try again
 
     def _handle_frame(self, frame_id, tick_number, frame_number, timestamp):
-        events = self.input_cap.get_events_since_last_frame(self.last_frame_time)
-        frame = self.screen_cap.get_latest_frame()
+        frame, frame_time = self.screen_cap.get_latest_frame()
+        if frame is None:
+            return
+        epsilon = CONFIG.get("frame_event_safety_margin", 0.001)  # .00X = Xms safety buffer to align frames and inputs
+        events = self.input_cap.get_events_since_last_frame(self.last_frame_time, frame_time - epsilon)
 
         for event in events:
             if event["type"] == "held":
@@ -88,8 +91,8 @@ class SessionRecorder:
             "frame_id": frame_id,
             "tick_number": tick_number,
             "frame_number": frame_number,
-            "abs_timestamp": round(timestamp, CONFIG["round_precision"]),
-            "timestamp": round(timestamp - self.start_time, CONFIG["round_precision"]),
+            "abs_timestamp": round(frame_time, CONFIG["round_precision"]),
+            "timestamp": round(frame_time - self.start_time, CONFIG["round_precision"]),
             "inputs": events
         }
 
@@ -98,7 +101,7 @@ class SessionRecorder:
             # Async file save + JSON write
             self.executor.submit(self._save_frame_and_log, frame, path, record)
 
-        self.last_frame_time = timestamp
+        self.last_frame_time = frame_time
 
     def _save_frame_and_log(self, frame, path, record):
         try:

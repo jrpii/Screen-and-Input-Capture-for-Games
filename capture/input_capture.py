@@ -76,7 +76,7 @@ class InputLogger:
 
             self.events.put({
                 "type": "move",
-                "timestamp": round(dt - self.start_time, CONFIG["round_precision"]),
+                "timestamp": dt - self.start_time,
                 "position": round_tuple(new_pos),
                 "velocity": round_tuple((dx, dy))
             })
@@ -101,7 +101,7 @@ class InputLogger:
 
             self.events.put({
                 "type": "click",
-                "timestamp": round(dt - self.start_time, CONFIG["round_precision"]),
+                "timestamp": dt - self.start_time,
                 "position": round_tuple(self.normalize_pos(x, y)),
                 "button": button.name,
                 "pressed": pressed,
@@ -118,7 +118,7 @@ class InputLogger:
                 self.current_state["keys"].add(key_name)
                 self.events.put({
                     "type": "key_press",
-                    "timestamp": round(dt - self.start_time, CONFIG["round_precision"]),
+                    "timestamp": dt - self.start_time,
                     "key": key_name
                 })
 
@@ -132,7 +132,7 @@ class InputLogger:
                 self.current_state["keys"].discard(key_name)
                 self.events.put({
                     "type": "key_release",
-                    "timestamp": round(dt - self.start_time, CONFIG["round_precision"]),
+                    "timestamp": dt - self.start_time,
                     "key": key_name
                 })
 
@@ -151,7 +151,7 @@ class InputLogger:
             self.scroll_ticks = 1
             self.events.put({
                 "type": "scroll_start",
-                "timestamp": round(now - self.start_time, CONFIG["round_precision"]),
+                "timestamp": now - self.start_time,
                 "direction": direction
             })
         else:
@@ -162,7 +162,7 @@ class InputLogger:
 
             self.events.put({
                 "type": "scroll_tick",
-                "timestamp": round(now - self.start_time, CONFIG["round_precision"]),
+                "timestamp": now - self.start_time,
                 "direction": direction,
                 "direction_change": is_direction_change
             })
@@ -180,10 +180,9 @@ class InputLogger:
         self.keyboard_listener.start()
         threading.Thread(target=self._scroll_monitor, daemon=True).start()
 
-    def get_events_since_last_frame(self, since_time):
-        now = time.time()
+    def get_events_since_last_frame(self, since_time, until_time):
+
         new_events = []
-        since_time -= now
 
          # If start_time isn't set, return held state only
         if self.start_time is None:
@@ -198,6 +197,10 @@ class InputLogger:
                 }
             }]
 
+        # Relative times
+        since_time -= self.start_time
+        until_time -= self.start_time
+
         with self.lock:
             tmp = []
             while not self.events.empty():
@@ -205,14 +208,13 @@ class InputLogger:
                 tmp.append(event)
 
             for event in tmp:
-                if event["timestamp"] >= since_time:
+                if since_time <= event["timestamp"] < until_time:
+                    event["timestamp"] = round(event["timestamp"], CONFIG["round_precision"])
                     new_events.append(event)
+                else:
+                    self.events.put(event)  # Re-add the unused older events back to the queue
 
-            # Re-add the unused older events back to the queue
-            for event in tmp:
-                if event["timestamp"] < since_time:
-                    self.events.put(event)
-
+        now = time.time()
         new_events.append({
             "type": "held",
             "timestamp": round(now - self.start_time, CONFIG["round_precision"]),
@@ -242,3 +244,19 @@ class InputLogger:
                     "ticks_down": self.scroll_ticks_down
                 })
                 self.scroll_active = False
+
+    def report_unprocessed_events(self):
+        with self.lock:
+            leftovers = []
+            while not self.events.empty():
+                event = self.events.get()
+                leftovers.append(event)
+
+            if leftovers:
+                print(f"\n Warning! {len(leftovers)} unprocessed input events remaining in queue:", flush=True)
+                for event in leftovers[:25]:  # Only show first 25
+                    print(f"  - {event['type']} @ {event['timestamp']:.6f}", flush=True)
+                if len(leftovers) > 25:
+                    print(f"  ...and {len(leftovers) - 25} more.", flush=True)
+            else:
+                print("All input events processed successfully.", flush=True)

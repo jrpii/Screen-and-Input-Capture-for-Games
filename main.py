@@ -80,6 +80,7 @@ if __name__ == "__main__":
     except KeyboardInterrupt:
         print("\nKeyboardInterrupt received. Stopping capture...")
     finally:
+        #inputs.report_unprocessed_events()
         screen.stop()
         recorder.close()
         print("Recording stopped.")

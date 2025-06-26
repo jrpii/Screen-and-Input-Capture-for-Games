@@ -46,6 +46,7 @@ CONFIG = {
     "session_tags": get_env_list("SESSION_TAGS", []),
     "notes": os.getenv("NOTES", ""),
     "round_precision": get_env_int("ROUND_PRECISION", 4),
+    "frame_event_safety_margin": get_env_float("FRAME_EVENT_SAFETY_MARGIN" ,0.001),
     "scroll_stop_timeout": get_env_float("SCROLL_STOP_TIMEOUT", 0.15),
     "max_workers": get_env_int("MAX_WORKERS", 8),
     "save_dir": os.getenv("SAVE_DIR", "data/raw"),

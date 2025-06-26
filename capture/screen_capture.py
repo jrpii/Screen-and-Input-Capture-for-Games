@@ -31,7 +31,7 @@ class ScreenCapture:
         img = Image.fromarray(bgr_frame, mode="RGB")
         #img = Image.fromarray(frame.frame_buffer)
         with self.lock:
-            self.frame = img.copy()
+            self.frame = (img.copy(), now)
 
     def get_frame_count(self):
         return self.frame_count
@@ -60,13 +60,13 @@ class ScreenCapture:
         #if self.lock.acquire(timeout=0.01):  # Slight wait to avoid blocking, replace below line if needed
         with self.lock:
             if not self.frame:
-                return None
+                return None, None
             try:
-                img = self.frame.copy()
+                img, ts = self.frame
                 crop_box = CONFIG.get("crop_box")  # e.g., (left, top, right, bottom)
                 if crop_box:
                     img = img.crop(crop_box)
-                return img
+                return img, ts
             except Exception as e:
                 print(f"Error copying frame: {e}")
                 return None
