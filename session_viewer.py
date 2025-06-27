@@ -4,6 +4,8 @@ import tkinter as tk
 from tkinter import filedialog
 from PIL import Image, ImageTk
 from PyQt6 import QtWidgets, QtGui, QtCore
+from pynput.mouse import Controller
+import math
 
 USE_TKINTER = "--tk" in sys.argv
 
@@ -69,54 +71,166 @@ def run_tkinter_gui(session_data):
     show_frame(index[0])
     root.mainloop()
 
-# ----- PYQT6 VERSION -----
+# ---------- PyQt6 player --------------------
 class QtSessionViewer(QtWidgets.QWidget):
-    def __init__(self, session_data):
+    def __init__(self, session_data, speed: float = 0.20):
         super().__init__()
-        self.session_data = session_data
-        self.index = 0
-        self.setWindowTitle("OSRS Session Viewer (PyQt6)")
+        self.data          = session_data
+        self.speed         = speed        # playback multiplier (0.20 = 1/5 real-time)
+        self.timing_exact  = True         # True: real Δt, False: evenly spaced
+        self.cursor_follow = False
+        self.playing       = False
 
-        self.label = QtWidgets.QLabel(self)
+        self.index     = 0                # current frame
+        self.move_list = []               # [(delay_ms, norm_pos), …]
+        self.move_i    = 0                # index in move_list
+
+        # --- UI --------------------------------------------------------
+        self.setWindowTitle("OSRS Session Viewer")
+        self.setFocusPolicy(QtCore.Qt.FocusPolicy.StrongFocus)
+
+        self.label = QtWidgets.QLabel(alignment=QtCore.Qt.AlignmentFlag.AlignCenter)
         self.label.setFixedSize(1344, 756)
 
-        self.prev_btn = QtWidgets.QPushButton("← Prev")
-        self.next_btn = QtWidgets.QPushButton("Next →")
-        self.prev_btn.clicked.connect(self.prev_frame)
-        self.next_btn.clicked.connect(self.next_frame)
+        self.prev_btn = QtWidgets.QPushButton("← Prev"); self.prev_btn.clicked.connect(self.prev_frame)
+        self.next_btn = QtWidgets.QPushButton("Next →"); self.next_btn.clicked.connect(self.next_frame)
+        for b in (self.prev_btn, self.next_btn):
+            b.setFocusPolicy(QtCore.Qt.FocusPolicy.NoFocus)   # let key-events reach widget
 
-        layout = QtWidgets.QVBoxLayout()
-        layout.addWidget(self.label)
-        layout.addWidget(self.prev_btn)
-        layout.addWidget(self.next_btn)
-        self.setLayout(layout)
+        btn_row = QtWidgets.QHBoxLayout(); btn_row.addWidget(self.prev_btn); btn_row.addWidget(self.next_btn)
+        self.status = QtWidgets.QLabel(styleSheet="color: grey;")
 
-        self.show_frame()
+        lay = QtWidgets.QVBoxLayout(self); lay.addWidget(self.label); lay.addLayout(btn_row); lay.addWidget(self.status)
 
-    def show_frame(self):
-        path = self.session_data.get_frame_path(self.index)
-        img = QtGui.QImage(path)
-        pixmap = QtGui.QPixmap.fromImage(img).scaled(1344, 756)
-        painter = QtGui.QPainter(pixmap)
+        # --- timer & mouse controller ---------------------------------
+        self.timer       = QtCore.QTimer(self); self.timer.timeout.connect(self._advance_move)
+        self.mouse_ctrl  = Controller()
 
-        inputs = self.session_data.get_inputs(self.index)
-        for event in inputs.get("inputs", []):
-            if event["type"] == "move":
-                x = int(event["position"][0] * 1344)
-                y = int(event["position"][1] * 756)
-                painter.setBrush(QtGui.QBrush(QtCore.Qt.GlobalColor.red))
-                painter.drawEllipse(QtCore.QPoint(x, y), 4, 4)
+        self._prep_frame(first=True)       # paint first frame
+    # ==================================================================
+    #  Frame preparation
+    # ==================================================================
+    def _prep_frame(self, first=False):
+        rec  = self.data.get_inputs(self.index)
+        path = self.data.get_frame_path(self.index)
 
-        painter.end()
-        self.label.setPixmap(pixmap)
+        # Build move_list = [(delay_ms, pos_norm), …]
+        moves = [ev for ev in rec.get("inputs", []) if ev["type"] == "move"]
+        self.move_list = []
+        prev_t = moves[0]["timestamp"] if moves else 0.0
+        for ev in moves:
+            dt = (ev["timestamp"] - prev_t) * self.speed
+            prev_t = ev["timestamp"]
+            self.move_list.append([dt*1000.0, ev["position"]])  # ms
+        # if equal-spacing mode requested -> overwrite delays
+        if not self.timing_exact and self.move_list:
+            avg = sum(d for d, _ in self.move_list)/len(self.move_list)
+            for m in self.move_list: m[0] = avg
 
-    def next_frame(self):
-        self.index = min(self.index + 1, len(self.session_data) - 1)
-        self.show_frame()
+        self.move_i = 0
+        last_pos = self.move_list[-1][1] if self.move_list else self._last_mouse_pos_norm(self.index)
+        self._render_pixmap(path, last_pos)
 
-    def prev_frame(self):
-        self.index = max(self.index - 1, 0)
-        self.show_frame()
+        if first: self._update_status()
+    # ------------------------------------------------------------------
+    def _render_pixmap(self, img_path, norm_pos):
+        pm = QtGui.QPixmap.fromImage(QtGui.QImage(img_path)).scaled(
+            self.label.width(), self.label.height(),
+            QtCore.Qt.AspectRatioMode.KeepAspectRatio,
+            QtCore.Qt.TransformationMode.SmoothTransformation
+        )
+        if norm_pos:
+            painter = QtGui.QPainter(pm)
+            x = int(norm_pos[0]*pm.width()); y = int(norm_pos[1]*pm.height())
+            painter.setBrush(QtGui.QBrush(QtCore.Qt.GlobalColor.red))
+            painter.setPen(QtCore.Qt.PenStyle.NoPen)
+            painter.drawEllipse(QtCore.QPoint(x,y), 4, 4)
+            painter.end()
+        self.label.setPixmap(pm)
+
+        if self.cursor_follow and norm_pos:
+            self._move_system_cursor(norm_pos)
+    # ------------------------------------------------------------------
+    def _last_mouse_pos_norm(self, idx):
+        for ev in reversed(self.data.get_inputs(idx).get("inputs", [])):
+            if ev["type"] == "move": return ev["position"]
+        return None
+    # ------------------------------------------------------------------
+    def _move_system_cursor(self, norm_pos):
+        target = self.label.mapToGlobal(QtCore.QPoint(
+            int(norm_pos[0]*self.label.width()),
+            int(norm_pos[1]*self.label.height())))
+        cur_x, cur_y = self.mouse_ctrl.position
+        dx, dy = target.x() - cur_x, target.y() - cur_y
+        if dx or dy:
+            self.mouse_ctrl.move(dx, dy)          # relative move (incremental)
+    # ==================================================================
+    #  Timer-driven move playback
+    # ==================================================================
+    def _advance_move(self):
+        if self.move_i >= len(self.move_list):            # done with this frame
+            if self.index >= len(self.data)-1:
+                self.playing = False; self.timer.stop(); self._update_status(); return
+            self.index += 1; self._prep_frame(); self.move_i = 0
+        else:
+            delay_ms, pos = self.move_list[self.move_i]
+            self._render_pixmap(self.data.get_frame_path(self.index), pos)
+            self.move_i += 1
+            if self.playing and self.move_i < len(self.move_list):
+                self.timer.start(max(1,int(self.move_list[self.move_i][0])))
+    # ==================================================================
+    #  Navigation helpers
+    # ==================================================================
+    def next_frame(self,*_): self._step(+1)
+    def prev_frame(self,*_): self._step(-1)
+    def _step(self, d):
+        self.playing = False; self.timer.stop()
+        self.index = max(0, min(len(self.data)-1, self.index+d)); self._prep_frame()
+
+    # ==================================================================
+    #  Key handling
+    # ==================================================================
+    def keyPressEvent(self, e):
+        k = e.key()
+        if   k==QtCore.Qt.Key.Key_P:      self.toggle_play()
+        elif k==QtCore.Qt.Key.Key_F1:     self.cursor_follow ^= True; self._update_status()
+        elif k==QtCore.Qt.Key.Key_T:      self.timing_exact ^= True;  self._prep_frame()
+        elif k in (QtCore.Qt.Key.Key_Plus, QtCore.Qt.Key.Key_Equal):
+            self._change_speed(1.1)
+        elif k in (QtCore.Qt.Key.Key_Minus, QtCore.Qt.Key.Key_Underscore):
+            self._change_speed(1/1.1)
+        elif k==QtCore.Qt.Key.Key_Right:  self.next_frame()
+        elif k==QtCore.Qt.Key.Key_Left:   self.prev_frame()
+        elif k==QtCore.Qt.Key.Key_Escape: self.playing=False; self.timer.stop(); self.cursor_follow=False; self._update_status()
+
+    def toggle_play(self):
+        self.playing ^= True
+        if self.playing and self.move_list:
+            self.move_i = 0
+            self.timer.start(max(1,int(self.move_list[0][0])))
+        else:
+            self.timer.stop()
+        self._update_status()
+
+    def _change_speed(self, factor):
+        self.speed = max(0.02, min(10.0, self.speed*factor))
+        # rebuild move_list with new speed
+        self._prep_frame()
+        self._update_status()
+    # ==================================================================
+    def _update_status(self):
+        state = "▶" if self.playing else "❚❚"
+        cur   = "CURSOR ON" if self.cursor_follow else "cursor off"
+        mode  = "exact" if self.timing_exact else "even"
+        spd   = f"{self.speed:.2f}×"
+
+        self.status.setText(
+            f"[P] play/pause  |  [+ / -] speed  |  [T] timing  |  [F1] cursor  |  [←/→] step  |  [Esc] stop"
+            f"     ||  mode: {mode}   speed: {spd}   {cur}"
+        )
+        self.setWindowTitle(
+            f"OSRS Session Viewer  –  frame {self.index+1}/{len(self.data)}   {state}   {cur}   mode={mode}   speed={spd}"
+        )
 
 def run_pyqt_gui(session_data):
     app = QtWidgets.QApplication(sys.argv)
